@@ -57,7 +57,6 @@ import { ref } from 'vue';
 import CrMenuLinks from '@/modules/layout/components/menu/menu-links.vue';
 import { supportMenu } from '@/modules/layout/config/menu';
 import CrMenuSupportHelp from '@/modules/layout/components/menu/menu-support-help.vue';
-import CrSystemStatus from '@/modules/layout/components/system-status/system-status.vue';
 
 const props = defineProps<{
   collapsed: boolean
