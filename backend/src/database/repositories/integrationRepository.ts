@@ -1,10 +1,10 @@
 import lodash from 'lodash'
 import Sequelize, { QueryTypes } from 'sequelize'
 import { IntegrationRunState, PlatformType } from '@crowd/types'
+import { Error404 } from '@crowd/common'
 import SequelizeRepository from './sequelizeRepository'
 import AuditLogRepository from './auditLogRepository'
 import SequelizeFilterUtils from '../utils/sequelizeFilterUtils'
-import Error404 from '../../errors/Error404'
 import { IRepositoryOptions } from './IRepositoryOptions'
 import QueryParser from './filters/queryParser'
 import { QueryOutput } from './filters/queryTypes'
@@ -258,6 +258,13 @@ class IntegrationRepository {
         status: 'done',
         platform,
       },
+      include: [
+        {
+          model: options.database.tenant,
+          as: 'tenant',
+          required: true,
+        },
+      ],
       limit: perPage,
       offset: (page - 1) * perPage,
       order: [['id', 'ASC']],

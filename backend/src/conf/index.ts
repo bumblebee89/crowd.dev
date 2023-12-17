@@ -36,6 +36,8 @@ import {
   WeeklyEmailsConfiguration,
   CrowdAnalyticsConfiguration,
   IBackendTemporalConfig,
+  IOpenStatusApiConfig,
+  GithubTokenConfiguration,
 } from './configTypes'
 
 // TODO-kube
@@ -113,6 +115,9 @@ export const ORGANIZATION_ENRICHMENT_CONFIG: OrganizationEnrichmentConfiguration
 
 export const EAGLE_EYE_CONFIG: EagleEyeConfiguration = config.get<EagleEyeConfiguration>('eagleEye')
 
+export const GITHUB_TOKEN_CONFIG: GithubTokenConfiguration =
+  config.get<GithubTokenConfiguration>('githubToken')
+
 export const UNLEASH_CONFIG: UnleashConfiguration = config.get<UnleashConfiguration>('unleash')
 
 export const OPENSEARCH_CONFIG: IOpenSearchConfig = config.get<IOpenSearchConfig>('opensearch')
@@ -142,3 +147,6 @@ export const TEMPORAL_CONFIG: IBackendTemporalConfig =
 
 export const SEARCH_SYNC_API_CONFIG: ISearchSyncApiConfig =
   config.get<ISearchSyncApiConfig>('searchSyncApi')
+
+export const OPEN_STATUS_API_CONFIG: IOpenStatusApiConfig =
+  config.get<IOpenStatusApiConfig>('openStatusApi')

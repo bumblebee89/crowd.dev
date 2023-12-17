@@ -3,6 +3,7 @@ import { RedisPubSubEmitter, getRedisClient } from '@crowd/redis'
 import axios from 'axios'
 import lodash from 'lodash'
 import moment from 'moment'
+import { i18n, Error400 } from '@crowd/common'
 import {
   ApiWebsocketMessage,
   MemberAttributeName,
@@ -12,12 +13,11 @@ import {
   PlatformType,
   OrganizationSource,
   SyncMode,
+  IOrganizationIdentity,
 } from '@crowd/types'
 import { ENRICHMENT_CONFIG, REDIS_CONFIG } from '../../../conf'
 import { AttributeData } from '../../../database/attributes/attribute'
 import MemberEnrichmentCacheRepository from '../../../database/repositories/memberEnrichmentCacheRepository'
-import Error400 from '../../../errors/Error400'
-import { i18n } from '../../../i18n'
 import track from '../../../segment/track'
 import { Member } from '../../../serverless/integrations/types/messageTypes'
 import { IServiceOptions } from '../../IServiceOptions'
@@ -287,16 +287,24 @@ export default class MemberEnrichmentService extends LoggerBase {
             const existingMember = await memberService.memberExists(username, platform)
 
             if (existingMember) {
-              await memberService.merge(memberId, existingMember.id, {
-                doSync: false,
-                mode: SyncMode.ASYNCHRONOUS,
-              })
-
-              // we also need to trigger remove existing member from opensearch, because the transaction isn't commited yet while merging
-              await searchSyncService.triggerRemoveMember(
-                this.options.currentTenant.id,
-                existingMember.id,
+              // add the member to merge suggestions
+              await MemberRepository.addToMerge(
+                [{ similarity: 0.9, members: [memberId, existingMember.id] }],
+                options,
               )
+
+              if (Array.isArray(normalized.username[platform])) {
+                // Filter out the identity that belongs to another member from the normalized payload
+                normalized.username[platform] = normalized.username[platform].filter(
+                  (u) => u !== username,
+                )
+              } else if (typeof normalized.username[platform] === 'string') {
+                delete normalized.username[platform]
+              } else {
+                throw new Error(
+                  `Unsupported data type for normalized.username[platform] "${normalized.username[platform]}".`,
+                )
+              }
             }
           }
         }
@@ -345,14 +353,24 @@ export default class MemberEnrichmentService extends LoggerBase {
       const organizationService = new OrganizationService(options)
       if (enrichmentData.work_experiences) {
         for (const workExperience of enrichmentData.work_experiences) {
+          const organizationIdentities: IOrganizationIdentity[] = [
+            {
+              name: workExperience.company,
+              platform: PlatformType.ENRICHMENT,
+            },
+          ]
+
+          if (workExperience.companyLinkedInUrl) {
+            organizationIdentities.push({
+              name: workExperience.companyLinkedInUrl.split('/').pop(),
+              platform: PlatformType.LINKEDIN,
+              url: workExperience.companyLinkedInUrl,
+            })
+          }
+
           const org = await organizationService.createOrUpdate(
             {
-              identities: [
-                {
-                  name: workExperience.company,
-                  platform: PlatformType.ENRICHMENT,
-                },
-              ],
+              identities: organizationIdentities,
             },
             {
               doSync: true,
@@ -383,6 +401,7 @@ export default class MemberEnrichmentService extends LoggerBase {
       await SequelizeRepository.commitTransaction(transaction)
       return result
     } catch (error) {
+      this.log.error(error, 'Error while enriching a member!')
       await SequelizeRepository.rollbackTransaction(transaction)
       throw error
     }

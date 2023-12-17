@@ -3,13 +3,17 @@ import { DbConnection, DbStore } from '@crowd/database'
 import { Unleash } from '@crowd/feature-flags'
 import { Logger } from '@crowd/logging'
 import { RedisClient } from '@crowd/redis'
-import { NodejsWorkerEmitter, SearchSyncWorkerEmitter, DataSinkWorkerEmitter } from '@crowd/sqs'
 import { Client as TemporalClient } from '@crowd/temporal'
 import DataSinkRepository from '../repo/dataSink.repo'
 import DataSinkService from '../service/dataSink.service'
+import {
+  DataSinkWorkerEmitter,
+  NodejsWorkerEmitter,
+  SearchSyncWorkerEmitter,
+} from '@crowd/common_services'
 
-const MAX_CONCURRENT_PROMISES = 50
-const MAX_RESULTS_TO_LOAD = 200
+const MAX_CONCURRENT_PROMISES = 2
+const MAX_RESULTS_TO_LOAD = 10
 
 export const processOldResultsJob = async (
   dbConn: DbConnection,
@@ -49,8 +53,6 @@ export const processOldResultsJob = async (
 
   let successCount = 0
   let errorCount = 0
-  let i = 0
-  let batchLength = resultsToProcess.length
 
   while (resultsToProcess.length > 0) {
     const resultId = resultsToProcess.pop()
@@ -59,21 +61,16 @@ export const processOldResultsJob = async (
       await timeout(1000)
     }
 
-    const currentIndex = i
-    i += 1
-    log.info(`Processing result ${currentIndex + 1}/${batchLength}`)
     current += 1
     service
       .processResult(resultId)
       .then(() => {
         current--
         successCount++
-        log.info(`Processed result ${currentIndex + 1}/${batchLength}`)
       })
-      .catch((err) => {
+      .catch(() => {
         current--
         errorCount++
-        log.error(err, `Error processing result ${currentIndex + 1}/${batchLength}!`)
       })
 
     if (resultsToProcess.length === 0) {
@@ -86,8 +83,6 @@ export const processOldResultsJob = async (
       log.info(`Processing ${resultsToProcess.length} old results...`)
       successCount = 0
       errorCount = 0
-      i = 0
-      batchLength = resultsToProcess.length
     }
   }
 }

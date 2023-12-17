@@ -7,28 +7,26 @@ import {
   SyncStatus,
   OrganizationSource,
   FeatureFlag,
+  PageData,
+  SegmentData,
+  SegmentProjectGroupNestedData,
+  SegmentProjectNestedData,
 } from '@crowd/types'
 import lodash, { chunk } from 'lodash'
 import moment from 'moment'
 import Sequelize, { QueryTypes } from 'sequelize'
 
+import { Error400, Error404 } from '@crowd/common'
 import { FieldTranslatorFactory, OpensearchQueryParser } from '@crowd/opensearch'
 import { ActivityDisplayService } from '@crowd/integrations'
 import { KUBE_MODE, SERVICE } from '@/conf'
 import { ServiceType } from '../../conf/configTypes'
-import Error404 from '../../errors/Error404'
 import isFeatureEnabled from '../../feature-flags/isFeatureEnabled'
 import { PlatformIdentities } from '../../serverless/integrations/types/messageTypes'
-import { PageData } from '../../types/common'
 import {
   MemberSegmentAffiliation,
   MemberSegmentAffiliationJoined,
 } from '../../types/memberSegmentAffiliationTypes'
-import {
-  SegmentData,
-  SegmentProjectGroupNestedData,
-  SegmentProjectNestedData,
-} from '../../types/segmentTypes'
 import { AttributeData } from '../attributes/attribute'
 import SequelizeFilterUtils from '../utils/sequelizeFilterUtils'
 import { IRepositoryOptions } from './IRepositoryOptions'
@@ -47,7 +45,6 @@ import {
   IMemberMergeSuggestion,
   mapUsernameToIdentities,
 } from './types/memberTypes'
-import Error400 from '../../errors/Error400'
 import OrganizationRepository from './organizationRepository'
 import MemberSyncRemoteRepository from './memberSyncRemoteRepository'
 import MemberAffiliationRepository from './memberAffiliationRepository'
@@ -424,7 +421,7 @@ class MemberRepository {
 
       const query = `
         INSERT INTO "memberToMerge" ("memberId", "toMergeId", "similarity", "createdAt", "updatedAt")
-        VALUES ${placeholders.join(', ')};
+        VALUES ${placeholders.join(', ')} on conflict do nothing;
       `
       try {
         await seq.query(query, {
@@ -871,12 +868,68 @@ class MemberRepository {
   static async getActivityAggregates(
     memberId: string,
     options: IRepositoryOptions,
+    segmentId?: string,
   ): Promise<ActivityAggregates> {
     const transaction = SequelizeRepository.getTransaction(options)
     const seq = SequelizeRepository.getSequelize(options)
     const currentTenant = SequelizeRepository.getCurrentTenant(options)
 
+    const replacements: Record<string, unknown> = {
+      memberId,
+      tenantId: currentTenant.id,
+    }
+
+    // query for all leaf segment ids
+    let extraCTEs = `
+      leaf_segment_ids AS (
+        select id
+        from segments
+        where "tenantId" = :tenantId and "parentSlug" is not null and "grandparentSlug" is not null
+      )
+    `
+
+    if (segmentId) {
+      // we load data for a specific segment (can be leaf, parent or grand parent id)
+      replacements.segmentId = segmentId
+      extraCTEs = `
+        input_segment AS (
+          select
+            id,
+            slug,
+            "parentSlug",
+            "grandparentSlug"
+          from segments
+          where id = :segmentId
+            and "tenantId" = :tenantId
+        ),
+        segment_level AS (
+          select
+            case
+              when "parentSlug" is not null and "grandparentSlug" is not null
+                  then 'child'
+              when "parentSlug" is not null and "grandparentSlug" is null
+                  then 'parent'
+              when "parentSlug" is null and "grandparentSlug" is null
+                  then 'grandparent'
+              end as level,
+            id,
+            slug,
+            "parentSlug",
+            "grandparentSlug"
+          from input_segment
+        ),
+        leaf_segment_ids AS (
+          select s.id
+          from segments s
+          join segment_level sl on (sl.level = 'child' and s.id = sl.id)
+              or (sl.level = 'parent' and s."parentSlug" = sl.slug and s."grandparentSlug" is not null)
+              or (sl.level = 'grandparent' and s."grandparentSlug" = sl.slug)
+        )
+      `
+    }
+
     const query = `
+      with ${extraCTEs}
         SELECT
         a."memberId",
         a."segmentId",
@@ -893,16 +946,14 @@ class MemberRepository {
             END
         )::numeric, 2):: float AS "averageSentiment"
         FROM activities a
+        join leaf_segment_ids lfs on a."segmentId" = lfs.id
         WHERE a."memberId" = :memberId
         and a."tenantId" = :tenantId
         GROUP BY a."memberId", a."segmentId"
     `
 
     const data: ActivityAggregates[] = await seq.query(query, {
-      replacements: {
-        memberId,
-        tenantId: currentTenant.id,
-      },
+      replacements,
       type: QueryTypes.SELECT,
       transaction,
     })
@@ -1004,6 +1055,7 @@ class MemberRepository {
     returnPlain = true,
     doPopulateRelations = true,
     ignoreTenant = false,
+    segmentId?: string,
   ) {
     const transaction = SequelizeRepository.getTransaction(options)
 
@@ -1049,7 +1101,7 @@ class MemberRepository {
     }
 
     if (doPopulateRelations) {
-      return this._populateRelations(record, options, returnPlain)
+      return this._populateRelations(record, options, returnPlain, segmentId)
     }
     const data = record.get({ plain: returnPlain })
 
@@ -3179,7 +3231,12 @@ class MemberRepository {
    * @param returnPlain If true: return object, otherwise  return model
    * @returns The model/object with filled relations and files
    */
-  static async _populateRelations(record, options: IRepositoryOptions, returnPlain = true) {
+  static async _populateRelations(
+    record,
+    options: IRepositoryOptions,
+    returnPlain = true,
+    segmentId?: string,
+  ) {
     if (!record) {
       return record
     }
@@ -3194,7 +3251,11 @@ class MemberRepository {
 
     const transaction = SequelizeRepository.getTransaction(options)
 
-    const activityAggregates = await MemberRepository.getActivityAggregates(output.id, options)
+    const activityAggregates = await MemberRepository.getActivityAggregates(
+      output.id,
+      options,
+      segmentId,
+    )
 
     output.activeOn = activityAggregates?.activeOn || []
     output.activityCount = activityAggregates?.activityCount || 0
@@ -3621,7 +3682,7 @@ class MemberRepository {
     })
   }
 
-  static async getMemberIdsandCount(
+  static async getMemberIdsandCountForEnrich(
     { limit = 20, offset = 0, orderBy = 'joinedAt_DESC', countOnly = false },
     options: IRepositoryOptions,
   ) {
@@ -3665,6 +3726,8 @@ class MemberRepository {
       JOIN "memberSegments" ms ON ms."memberId" = m.id
       WHERE m."tenantId" = :tenantId
       AND ms."segmentId" IN (:segmentIds)
+      AND (m."lastEnriched" IS NULL OR date_part('month', age(now(), m."lastEnriched")) >= 6)
+      AND m."deletedAt" is NULL
     ) as count
     `
 
@@ -3684,6 +3747,8 @@ class MemberRepository {
       `SELECT m.id FROM members m
       JOIN "memberSegments" ms ON ms."memberId" = m.id
       WHERE m."tenantId" = :tenantId and ms."segmentId" in (:segmentIds) 
+      AND (m."lastEnriched" IS NULL OR date_part('month', age(now(), m."lastEnriched")) >= 6)
+      AND m."deletedAt" is NULL
       ORDER BY ${orderByString} 
       LIMIT :limit OFFSET :offset`,
       {
@@ -3696,6 +3761,82 @@ class MemberRepository {
       count: (memberCount[0] as any).count,
       ids: members.map((i: any) => i.id),
     }
+  }
+
+  static async moveNotesBetweenMembers(
+    fromMemberId: string,
+    toMemberId: string,
+    options: IRepositoryOptions,
+  ): Promise<void> {
+    const transaction = SequelizeRepository.getTransaction(options)
+
+    const seq = SequelizeRepository.getSequelize(options)
+
+    const params: any = {
+      fromMemberId,
+      toMemberId,
+    }
+
+    const deleteQuery = `
+      delete from "memberNotes" using "memberNotes" as mn2
+      where "memberNotes"."memberId" = :fromMemberId 
+      and "memberNotes"."noteId" = mn2."noteId"
+      and mn2."memberId" = :toMemberId;
+    `
+
+    await seq.query(deleteQuery, {
+      replacements: params,
+      type: QueryTypes.DELETE,
+      transaction,
+    })
+
+    const updateQuery = `
+      update "memberNotes" set "memberId" = :toMemberId where "memberId" = :fromMemberId;
+    `
+
+    await seq.query(updateQuery, {
+      replacements: params,
+      type: QueryTypes.UPDATE,
+      transaction,
+    })
+  }
+
+  static async moveTasksBetweenMembers(
+    fromMemberId: string,
+    toMemberId: string,
+    options: IRepositoryOptions,
+  ): Promise<void> {
+    const transaction = SequelizeRepository.getTransaction(options)
+
+    const seq = SequelizeRepository.getSequelize(options)
+
+    const params: any = {
+      fromMemberId,
+      toMemberId,
+    }
+
+    const deleteQuery = `
+      delete from "memberTasks" using "memberTasks" as mt2
+      where "memberTasks"."memberId" = :fromMemberId 
+      and "memberTasks"."taskId" = mt2."taskId"
+      and mt2."memberId" = :toMemberId;
+    `
+
+    await seq.query(deleteQuery, {
+      replacements: params,
+      type: QueryTypes.DELETE,
+      transaction,
+    })
+
+    const updateQuery = `
+      update "memberTasks" set "memberId" = :toMemberId where "memberId" = :fromMemberId;
+    `
+
+    await seq.query(updateQuery, {
+      replacements: params,
+      type: QueryTypes.UPDATE,
+      transaction,
+    })
   }
 }
 

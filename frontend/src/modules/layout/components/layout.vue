@@ -118,6 +118,27 @@
               You can expect major improvements by Tuesday, Aug 15th. 🚧
             </div>
           </banner>
+          <banner
+            v-if="showUpgradeEssentialBanner"
+            variant="alert"
+          >
+            <div
+              class="flex items-center justify-center grow text-sm"
+            >
+              <p>
+                crowd.dev's free plan ends on <span class="font-semibold"> January 1st, 2024</span>.
+                Your access to this workspace will be revoked after.
+              </p>
+              <router-link :to="{ name: 'settings', query: { activeTab: 'plans' } }">
+                <el-button
+                  class="btn btn--sm btn--primary ml-4"
+                  :loading="loading"
+                >
+                  Upgrade workspace
+                </el-button>
+              </router-link>
+            </div>
+          </banner>
         </div>
         <router-view />
       </el-main>
@@ -129,6 +150,9 @@
 import { mapActions, mapGetters } from 'vuex';
 import Banner from '@/shared/banner/banner.vue';
 import AppMenu from '@/modules/layout/components/menu.vue';
+import { mapActions as piniaMapActions } from 'pinia';
+import { useActivityStore } from '@/modules/activity/store/pinia';
+import { useActivityTypeStore } from '@/modules/activity/store/type';
 
 export default {
   name: 'AppLayout',
@@ -165,6 +189,7 @@ export default {
       showIntegrationsNeedReconnectAlert:
         'tenant/showIntegrationsNeedReconnectAlert',
       showOrganizationsAlertBanner: 'tenant/showOrganizationsAlertBanner',
+      showUpgradeEssentialBanner: 'tenant/showUpgradeEssentialBanner',
       showBanner: 'tenant/showBanner',
     }),
 
@@ -220,6 +245,8 @@ export default {
 
   async mounted() {
     this.initPendo();
+    this.fetchActivityTypes();
+    this.fetchActivityChannels();
   },
 
   unmounted() {
@@ -230,6 +257,13 @@ export default {
     ...mapActions({
       collapseMenu: 'layout/collapseMenu',
     }),
+    ...piniaMapActions(useActivityStore, {
+      fetchActivityChannels: 'fetchActivityChannels',
+    }),
+    ...piniaMapActions(useActivityTypeStore, {
+      fetchActivityTypes: 'fetchActivityTypes',
+    }),
+
     initPendo() {
       // This function creates anonymous visitor IDs in Pendo unless you change the visitor id field to use your app's values
       // This function uses the placeholder 'ACCOUNT-UNIQUE-ID' value for account ID unless you change the account id field to use your app's values

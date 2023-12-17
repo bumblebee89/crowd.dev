@@ -1,19 +1,17 @@
 import express from 'express'
-import { ActivitySyncService, OpenSearchService } from '@crowd/opensearch'
+import { ActivitySyncService } from '@crowd/opensearch'
 import { ApiRequest } from '../middleware/index'
 import { asyncWrap } from 'middleware/error'
-import { OPENSEARCH_CONFIG } from 'conf'
 
 const router = express.Router()
-const opensearchConfig = OPENSEARCH_CONFIG()
 
 router.post(
   '/sync/activities',
   asyncWrap(async (req: ApiRequest, res) => {
-    const openSearchService = new OpenSearchService(req.log, opensearchConfig)
-    const activitySyncService = new ActivitySyncService(req.dbStore, openSearchService, req.log)
+    const activitySyncService = new ActivitySyncService(req.dbStore, req.opensearch, req.log)
     const { activityIds } = req.body
     try {
+      req.log.trace(`Calling activitySyncService.syncActivities for ${activityIds}`)
       await activitySyncService.syncActivities(activityIds)
       res.sendStatus(200)
     } catch (error) {
@@ -25,11 +23,11 @@ router.post(
 router.post(
   '/sync/tenant/activities',
   asyncWrap(async (req: ApiRequest, res) => {
-    const openSearchService = new OpenSearchService(req.log, opensearchConfig)
-    const activitySyncService = new ActivitySyncService(req.dbStore, openSearchService, req.log)
+    const activitySyncService = new ActivitySyncService(req.dbStore, req.opensearch, req.log)
 
     const { tenantId } = req.body
     try {
+      req.log.trace(`Calling activitySyncService.syncTenantActivities for tenant ${tenantId}`)
       await activitySyncService.syncTenantActivities(tenantId)
       res.sendStatus(200)
     } catch (error) {
@@ -41,11 +39,13 @@ router.post(
 router.post(
   '/sync/organization/activities',
   asyncWrap(async (req: ApiRequest, res) => {
-    const openSearchService = new OpenSearchService(req.log, opensearchConfig)
-    const activitySyncService = new ActivitySyncService(req.dbStore, openSearchService, req.log)
+    const activitySyncService = new ActivitySyncService(req.dbStore, req.opensearch, req.log)
 
     const { organizationId } = req.body
     try {
+      req.log.trace(
+        `Calling activitySyncService.syncOrganizationActivities for organization ${organizationId}`,
+      )
       await activitySyncService.syncOrganizationActivities(organizationId)
       res.sendStatus(200)
     } catch (error) {
@@ -57,11 +57,11 @@ router.post(
 router.post(
   '/cleanup/tenant/activities',
   asyncWrap(async (req: ApiRequest, res) => {
-    const openSearchService = new OpenSearchService(req.log, opensearchConfig)
-    const activitySyncService = new ActivitySyncService(req.dbStore, openSearchService, req.log)
+    const activitySyncService = new ActivitySyncService(req.dbStore, req.opensearch, req.log)
 
     const { tenantId } = req.body
     try {
+      req.log.trace(`Calling activitySyncService.cleanupActivityIndex for tenant ${tenantId}`)
       await activitySyncService.cleanupActivityIndex(tenantId)
       res.sendStatus(200)
     } catch (error) {
@@ -73,12 +73,12 @@ router.post(
 router.post(
   '/cleanup/activity',
   asyncWrap(async (req: ApiRequest, res) => {
-    const openSearchService = new OpenSearchService(req.log, opensearchConfig)
-    const activitySyncService = new ActivitySyncService(req.dbStore, openSearchService, req.log)
+    const activitySyncService = new ActivitySyncService(req.dbStore, req.opensearch, req.log)
 
     const { activityId } = req.body
     try {
-      await activitySyncService.cleanupActivityIndex(activityId)
+      req.log.trace(`Calling activitySyncService.removeActivity for activity ${activityId}`)
+      await activitySyncService.removeActivity(activityId)
       res.sendStatus(200)
     } catch (error) {
       res.status(500).send(error.message)
