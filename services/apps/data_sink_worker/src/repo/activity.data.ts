@@ -1,5 +1,6 @@
 import { DbColumnSet, DbInstance } from '@crowd/database'
 import { ISentimentAnalysisResult } from '@crowd/sentiment'
+import { PlatformType } from '@crowd/types'
 
 export interface IDbActivity {
   id: string
@@ -44,6 +45,8 @@ export interface IDbActivityCreateData {
   channel?: string
   url?: string
   organizationId?: string
+  objectMemberId?: string
+  objectMemberUsername?: string
 }
 
 let insertActivityColumnSet: DbColumnSet
@@ -105,6 +108,7 @@ export interface IDbActivityUpdateData {
   channel?: string
   url?: string
   organizationId?: string
+  platform?: PlatformType
 }
 
 let updateActivityColumnSet: DbColumnSet
@@ -132,6 +136,7 @@ export const getUpdateActivityColumnSet = (instance: DbInstance): DbColumnSet =>
       'url',
       'updatedAt',
       'organizationId',
+      'platform',
     ],
     {
       table: {

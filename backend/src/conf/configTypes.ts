@@ -92,6 +92,8 @@ export interface PlansConfiguration {
   stripWebhookSigningSecret: string
   stripeEagleEyePlanProductId: string
   stripeGrowthPlanProductId: string
+  stripeEssentialPlanProductId: string
+  stripeScalePlanProductId: string
 }
 
 export interface DevtoConfiguration {
@@ -253,4 +255,9 @@ export interface IBackendTemporalConfig extends ITemporalConfig {
 
 export interface IOpenStatusApiConfig {
   baseUrl: string
+}
+
+export interface IRedditConfig {
+  clientId: string
+  clientSecret: string
 }

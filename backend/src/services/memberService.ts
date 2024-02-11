@@ -15,7 +15,8 @@ import {
 import lodash from 'lodash'
 import moment from 'moment-timezone'
 import validator from 'validator'
-import { TEMPORAL_CONFIG } from '@/conf'
+import { getOpensearchClient } from '@crowd/opensearch'
+import { OPENSEARCH_CONFIG, TEMPORAL_CONFIG } from '@/conf'
 import { IRepositoryOptions } from '../database/repositories/IRepositoryOptions'
 import ActivityRepository from '../database/repositories/activityRepository'
 import MemberAttributeSettingsRepository from '../database/repositories/memberAttributeSettingsRepository'
@@ -666,9 +667,6 @@ export default class MemberService extends LoggerBase {
       const memberOrganizationService = new MemberOrganizationService(repoOptions)
       await memberOrganizationService.moveOrgsBetweenMembers(originalId, toMergeId)
 
-      // update activities to belong to the originalId member
-      await MemberRepository.moveActivitiesBetweenMembers(toMergeId, originalId, repoOptions)
-
       // Remove toMerge from original member
       await MemberRepository.removeToMerge(originalId, toMergeId, repoOptions)
 
@@ -679,10 +677,19 @@ export default class MemberService extends LoggerBase {
         currentSegments: secondMemberSegments,
       })
 
-      // Delete toMerge member
-      await MemberRepository.destroy(toMergeId, repoOptions, true)
-
       await SequelizeRepository.commitTransaction(tx)
+
+      await this.options.temporal.workflow.start('finishMemberMerging', {
+        taskQueue: 'entity-merging',
+        workflowId: `finishMemberMerging/${originalId}/${toMergeId}`,
+        retry: {
+          maximumAttempts: 10,
+        },
+        args: [originalId, toMergeId, this.options.currentTenant.id],
+        searchAttributes: {
+          TenantId: [this.options.currentTenant.id],
+        },
+      })
 
       if (syncOptions.doSync) {
         try {
@@ -994,6 +1001,24 @@ export default class MemberService extends LoggerBase {
       const record = await MemberRepository.update(id, data, repoOptions)
 
       await SequelizeRepository.commitTransaction(transaction)
+      await this.options.temporal.workflow.start('memberUpdate', {
+        taskQueue: 'profiles',
+        workflowId: `${TemporalWorkflowId.MEMBER_UPDATE}/${this.options.currentTenant.id}/${id}`,
+        workflowIdReusePolicy: WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_TERMINATE_IF_RUNNING,
+        retry: {
+          maximumAttempts: 10,
+        },
+        args: [
+          {
+            member: {
+              id,
+            },
+          },
+        ],
+        searchAttributes: {
+          TenantId: [this.options.currentTenant.id],
+        },
+      })
 
       if (syncToOpensearch) {
         try {
@@ -1131,6 +1156,10 @@ export default class MemberService extends LoggerBase {
     )
   }
 
+  async findByIdOpensearch(id: string, segmentId?: string) {
+    return MemberRepository.findByIdOpensearch(id, this.options, segmentId)
+  }
+
   async queryV2(data) {
     if (await isFeatureEnabled(FeatureFlag.SEGMENTS, this.options)) {
       if (data.segments.length !== 1) {
@@ -1182,11 +1211,25 @@ export default class MemberService extends LoggerBase {
   }
 
   async queryForCsv(data) {
-    data.limit = 10000000000000
-    const found = await this.query(data, true)
+    const transformed = {
+      filter: data.filter,
+      limit: data.limit || 200,
+      offset: data.offset || 0,
+      orderBy: data.orderBy,
+      countOnly: false,
+      segments: this.options.currentSegments.map((s) => s.id) || [],
+      attributesSettings: (
+        await MemberAttributeSettingsRepository.findAndCountAll({}, this.options)
+      ).rows,
+    }
+
+    const found = await MemberRepository.findAndCountAllOpensearch(transformed, {
+      ...this.options,
+      opensearch: getOpensearchClient(OPENSEARCH_CONFIG),
+    })
 
     const relations = [
-      { relation: 'organizations', attributes: ['name'] },
+      { relation: 'organizations', attributes: ['displayName', 'website', 'logo'] },
       { relation: 'notes', attributes: ['body'] },
       { relation: 'tags', attributes: ['name'] },
     ]
