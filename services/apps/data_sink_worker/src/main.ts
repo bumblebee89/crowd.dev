@@ -5,7 +5,7 @@ import {
   SearchSyncWorkerEmitter,
   NodejsWorkerEmitter,
 } from '@crowd/common_services'
-import { DbStore, getDbConnection } from '@crowd/database'
+import { DbStore, getDbConnection } from '@crowd/data-access-layer/src/database'
 import { getServiceTracer } from '@crowd/tracing'
 import { getServiceLogger } from '@crowd/logging'
 import { getSqsClient } from '@crowd/sqs'
@@ -19,7 +19,6 @@ import {
 } from './conf'
 import { WorkerQueueReceiver } from './queue'
 import { getRedisClient } from '@crowd/redis'
-import { processOldResultsJob } from './jobs/processOldResults'
 import { getUnleashClient } from '@crowd/feature-flags'
 import { Client as TemporalClient, getTemporalClient } from '@crowd/temporal'
 
@@ -27,7 +26,6 @@ const tracer = getServiceTracer()
 const log = getServiceLogger()
 
 const MAX_CONCURRENT_PROCESSING = 5
-const PROCESSING_INTERVAL_MINUTES = 4
 
 setImmediate(async () => {
   log.info('Starting data sink worker...')
@@ -89,7 +87,6 @@ setImmediate(async () => {
     temporal,
     tracer,
     log,
-    MAX_CONCURRENT_PROCESSING,
   )
 
   try {
@@ -97,30 +94,6 @@ setImmediate(async () => {
     await searchSyncWorkerEmitter.init()
     await dataWorkerEmitter.init()
 
-    let processing = false
-    setInterval(async () => {
-      try {
-        log.info('Checking for old results to process...')
-        if (!processing) {
-          processing = true
-          log.info('Processing old results...')
-          await processOldResultsJob(
-            dbConnection,
-            redisClient,
-            nodejsWorkerEmitter,
-            searchSyncWorkerEmitter,
-            dataWorkerEmitter,
-            unleash,
-            temporal,
-            log,
-          )
-        }
-      } catch (err) {
-        log.error(err, 'Failed to process old results!')
-      } finally {
-        processing = false
-      }
-    }, PROCESSING_INTERVAL_MINUTES * 60 * 1000)
     await queue.start()
   } catch (err) {
     log.error({ err }, 'Failed to start queues!')

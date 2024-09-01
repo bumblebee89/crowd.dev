@@ -27,9 +27,29 @@
                   <span class="font-medium text-gray-500">{{ value.urlPrefix }}</span>
                 </template>
               </el-input>
+
+              <el-tooltip
+                v-if="props.showUnmerge && Object.entries(identitiesForm).length > 1 "
+                :disabled="!staticModel[ii]?.username || staticModel[ii]?.username === model[ii].username"
+                content="Not possible to unmerge an unsaved identity"
+                placement="top"
+              >
+                <div>
+                  <el-button
+                    class="btn btn--md btn--transparent block w-8 !h-8 p-0"
+                    :disabled="!staticModel[ii]?.username || staticModel[ii]?.username !== model[ii].username"
+                    @click="emit('unmerge', {
+                      platform: key,
+                      username: staticModel[ii]?.name,
+                    })"
+                  >
+                    <i class="ri-link-unlink-m text-lg" />
+                  </el-button>
+                </div>
+              </el-tooltip>
               <el-button
                 :disabled="editingDisabled(key)"
-                class="btn btn--md btn--transparent w-10 h-10"
+                class="btn btn--md btn--transparent w-8 !h-8"
                 @click="removeUsername(ii)"
               >
                 <i class="ri-delete-bin-line text-lg" />
@@ -43,10 +63,12 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch } from 'vue';
+import {
+  computed, reactive, ref, watch,
+} from 'vue';
 import { CrowdIntegrations } from '@/integrations/integrations-config';
 
-const emit = defineEmits(['update:modelValue']);
+const emit = defineEmits(['update:modelValue', 'unmerge']);
 
 const props = defineProps({
   modelValue: {
@@ -56,6 +78,10 @@ const props = defineProps({
   record: {
     type: Object,
     default: () => {},
+  },
+  showUnmerge: {
+    type: Boolean,
+    default: false,
   },
 });
 
@@ -104,17 +130,30 @@ watch(
   { deep: true, immediate: true },
 );
 
+const existingIdentities = computed(() => (props.record?.identities || []).map((i) => ({
+  ...i,
+  username: i.url ? i.url.split('/').at(-1) : '',
+})));
+
 watch(
   model,
   (value) => {
     // Parse username object
+
     const identities = value
       .filter((i) => !Object.keys(identitiesForm).includes(i.platform) || !!i.username?.trim().length)
-      .map((i) => ({
-        ...i,
-        name: i.username || i.name,
-        url: i.username?.length ? `https://${identitiesForm[i.platform]?.urlPrefix}${i.username}` : null,
-      }));
+      .map((i) => {
+        const existingOnes = existingIdentities.value.filter((id) => id.platform === i.platform);
+        const index = value
+          .filter((id) => id.platform === i.platform)
+          .findIndex((id) => id.username === i.username);
+        const existingOne = index >= 0 ? existingOnes[index] : null;
+        return {
+          ...i,
+          name: !existingOne || existingOne.username !== i.username ? i.username || i.name : i.name,
+          url: i.username?.length ? `https://${identitiesForm[i.platform]?.urlPrefix}${i.username}` : null,
+        };
+      });
 
     // Emit updated member
     emit('update:modelValue', {
@@ -140,6 +179,11 @@ const removeUsername = (index) => {
     model.value[0] = '';
   }
 };
+
+const staticModel = computed(() => props.record.identities.map((i) => ({
+  ...i,
+  username: i.url ? i.url.split('/').at(-1) : '',
+})));
 </script>
 
 <script>

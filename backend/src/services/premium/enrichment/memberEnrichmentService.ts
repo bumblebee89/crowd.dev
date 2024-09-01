@@ -24,7 +24,7 @@ import {
   EnrichmentAPIResponse,
   EnrichmentAPISkills,
   EnrichmentAPIWorkExperience,
-} from '@crowd/types/premium'
+} from '@crowd/types/src/premium'
 import { WorkflowIdReusePolicy } from '@crowd/temporal'
 import { ENRICHMENT_CONFIG, REDIS_CONFIG } from '../../../conf'
 import { AttributeData } from '../../../database/attributes/attribute'
@@ -145,6 +145,11 @@ export default class MemberEnrichmentService extends LoggerBase {
   }
 
   async bulkEnrich(memberIds: string[], notifyFrontend: boolean = true) {
+    // Check for contact enrichment envs
+    if (!ENRICHMENT_CONFIG.apiKey || !ENRICHMENT_CONFIG.url) {
+      throw new Error('Enrichment API envs are missing!')
+    }
+
     const redis = await getRedisClient(REDIS_CONFIG, true)
 
     const apiPubSubEmitter = new RedisPubSubEmitter(
@@ -224,6 +229,11 @@ export default class MemberEnrichmentService extends LoggerBase {
    * @returns a promise that resolves to the enrichment data for the member
    */
   async enrichOne(memberId, syncMode = SyncMode.ASYNCHRONOUS) {
+    // Check for contact enrichment envs
+    if (!ENRICHMENT_CONFIG.apiKey || !ENRICHMENT_CONFIG.url) {
+      throw new Error('Contact enrichment API env variables not set!')
+    }
+
     const transaction = await SequelizeRepository.createTransaction(this.options)
 
     try {
